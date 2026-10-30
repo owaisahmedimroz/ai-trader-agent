@@ -26,6 +26,7 @@ APPEND_ONLY_TABLES = (
     "lesson_proposals",
     "proposal_decisions",
     "decision_log",
+    "ai_usage",
 )
 
 SCHEMA = """
@@ -119,6 +120,18 @@ CREATE TABLE IF NOT EXISTS decision_log (
     reasons_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_decisions_time ON decision_log (at);
+
+CREATE TABLE IF NOT EXISTS ai_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    model TEXT NOT NULL,
+    status TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    latency_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_time ON ai_usage (at);
 """
 
 TRIGGERS = "\n".join(
@@ -275,6 +288,14 @@ class SSoR:
             {"proposal_id": proposal_id, "decision": decision, "decided_by": decided_by, "note": note, "at": iso(at)},
         )
 
+    def record_ai_usage(self, at, purpose: str, model: str, status: str, input_tokens: int = 0,
+                        output_tokens: int = 0, latency_ms: int | None = None) -> int:
+        return self._insert(
+            "ai_usage",
+            {"at": iso(at), "purpose": purpose, "model": model, "status": status,
+             "input_tokens": int(input_tokens), "output_tokens": int(output_tokens), "latency_ms": latency_ms},
+        )
+
     def log_decision(self, at, pair: str, setup_id: str, decision: str, reasons) -> int:
         return self._insert(
             "decision_log",
@@ -334,6 +355,56 @@ class SSoR:
             params.append(mode)
         rows = self.conn.execute(query + " ORDER BY s.signal_time", params).fetchall()
         return [self._signal_dict(r) for r in rows]
+
+    def has_feed_outcome(self, signal_id: int) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM outcomes WHERE signal_id = ? AND source = 'feed' LIMIT 1", (signal_id,)
+        ).fetchone()
+        return row is not None
+
+    def setup_outcomes(self, setup_id: str, modes=("live",), limit: int = 50, before=None) -> list[dict]:
+        """Most recent signals of a setup that have a result (newest first), with the human's action."""
+        marks = ", ".join("?" for _ in modes)
+        query = f"SELECT * FROM signals WHERE setup_id = ? AND mode IN ({marks})"
+        params: list = [setup_id, *modes]
+        if before is not None:
+            query += " AND signal_time < ?"
+            params.append(iso(before))
+        rows = self.conn.execute(query + " ORDER BY signal_time DESC, id DESC", params).fetchall()
+        out = []
+        for row in rows:
+            signal = self._signal_dict(row)
+            outcome = self.best_outcome(signal["id"])
+            if outcome is None:
+                continue
+            action = self.latest_action(signal["id"])
+            signal["result"] = outcome["result"]
+            signal["result_source"] = outcome["source"]
+            signal["action"] = action["action"] if action else None
+            out.append(signal)
+            if len(out) >= limit:
+                break
+        return out
+
+    def taken_without_broker_result(self, start, end) -> list[dict]:
+        """Live signals the human took but whose Quotex result has not been entered yet."""
+        rows = self.conn.execute(
+            "SELECT s.* FROM signals s WHERE s.mode = 'live' AND s.signal_time >= ? AND s.signal_time < ? "
+            "AND EXISTS (SELECT 1 FROM human_actions a WHERE a.signal_id = s.id AND a.action = 'TAKEN' "
+            "AND a.id = (SELECT MAX(id) FROM human_actions WHERE signal_id = s.id)) "
+            "AND NOT EXISTS (SELECT 1 FROM outcomes o WHERE o.signal_id = s.id AND o.source = 'broker') "
+            "ORDER BY s.signal_time",
+            (iso(start), iso(end)),
+        ).fetchall()
+        return [self._signal_dict(r) for r in rows]
+
+    def ai_usage_between(self, start, end) -> dict:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS calls, COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens "
+            "FROM ai_usage WHERE at >= ? AND at < ?",
+            (iso(start), iso(end)),
+        ).fetchone()
+        return {"calls": int(row["calls"]), "tokens": int(row["tokens"])}
 
     def pending_proposals(self) -> list[dict]:
         rows = self.conn.execute(

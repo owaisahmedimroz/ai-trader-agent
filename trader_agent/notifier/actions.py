@@ -15,6 +15,8 @@ from .messages import parse_callback, result_buttons, review_buttons
 def apply_callback(ssor: SSoR, data: str, now) -> tuple[str, list | None]:
     """Record a button press. Returns (reply text, next buttons or None)."""
     kind, signal_id, value = parse_callback(data)
+    if kind == "prop":
+        return decide_proposal(ssor, signal_id, value, now), None
     signal = ssor.get_signal(signal_id)
     if signal is None:
         return f"Signal #{signal_id} nahi mila.", None
@@ -34,6 +36,17 @@ def apply_callback(ssor: SSoR, data: str, now) -> tuple[str, list | None]:
         return f"{icon} #{signal_id} {value} save.", None
     ssor.record_review(signal_id, value, now)
     return f"📝 #{signal_id} review save. Shukriya!", None
+
+
+def decide_proposal(ssor: SSoR, proposal_id: int, decision: str, now) -> str:
+    """Record the owner's decision. Approval does not change KSoR by itself."""
+    if not any(p["id"] == proposal_id for p in ssor.pending_proposals()):
+        return f"Tajweez #{proposal_id} pehle hi faisla shuda hai ya mili nahi."
+    ssor.decide_proposal(proposal_id, decision, "owner", as_utc(now))
+    if decision == "approved":
+        return (f"✅ Tajweez #{proposal_id} approve. Ab Claude Code se kahein ke isay KSoR mein draft "
+                "setup/version ke taur par likhe — backtest aur Ustad ki manzoori ke baad hi live hoga.")
+    return f"❌ Tajweez #{proposal_id} reject."
 
 
 def parse_payout(args: list[str]) -> tuple[str, float]:

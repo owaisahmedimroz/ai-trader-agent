@@ -76,11 +76,16 @@ Invariants (keep them true in every change):
 | `trader_agent/gate.py` | `DayState`, `RiskGate.check` → `GateDecision(allowed, reasons)` |
 | `trader_agent/control.py` | `data/control.json` (stop/pause/payout/news) shared by bot and loop |
 | `trader_agent/ssor.py` | append-only SQLite store + summaries |
-| `trader_agent/pipeline.py` | `Agent.on_closed_candle` — the per-candle loop body |
+| `trader_agent/pipeline.py` | `Agent.on_closed_candle` (per-candle body), `Agent.preview` (heads-up), AI confirm hook |
+| `trader_agent/live.py` | `LiveRunner`: candle-close timing, heads-up/GO/CANCEL, result prompts, heartbeat, session start/end |
+| `trader_agent/briefing.py` | deterministic pre-session facts (news, regime per pair, setup health) |
+| `trader_agent/calendar_feed.py` | Forex Factory weekly JSON → `NewsEvent`s (unofficial feed, off by default) |
+| `trader_agent/brain/` | `client.py` (SDK wrapper: timeout, no retries, JSON schema, `ai_usage`, budget), `confirm.py`, `review.py` |
+| `trader_agent/learning.py` | setup health, drift auto-pause (DSoR control), weekly report |
 | `trader_agent/backtest/` | `run_backtest` (optional gate simulation, OOS split) and HTML/Markdown report |
 | `trader_agent/notifier/` | message text, button actions, console, Telegram sender (HTTP) and bot (inbound) |
 | `trader_agent/feeds/` | `Feed` interface; `mt5_feed.py` (Windows, **unverified**) |
-| `scripts/` | `check_setup.py`, `run_backtest.py`, `replay.py`, `make_sample_data.py` |
+| `scripts/` | `check_setup.py`, `run_backtest.py`, `replay.py`, `run_live.py`, `weekly_report.py`, `start_agent.bat`, `make_sample_data.py` |
 
 ## Commands
 
@@ -95,6 +100,9 @@ python scripts/check_setup.py            # add --mt5 --telegram once .env is fil
 python scripts/run_backtest.py --data data/history/<file>.csv --pair EURUSD --include-drafts --oos-from 2025-10-01
 python scripts/replay.py --data data/history/<file>.csv --pair EURUSD --from 2025-03-03 --to 2025-03-04 --include-drafts
 python -m trader_agent.notifier.telegram_bot
+python scripts/run_live.py --shadow-only          # live plumbing test with draft setups
+scripts\start_agent.bat                           # bot + live loop (see docs/LIVE.md)
+python scripts/weekly_report.py
 ```
 
 Tests must pass on pandas 2.x (pinned) and stay warning-free on pandas 3.x.
@@ -105,34 +113,37 @@ Tests must pass on pandas 2.x (pinned) and stay warning-free on pandas 3.x.
 language, features, risk gate, append-only SSoR, backtester + report, replay
 pipeline, Telegram sender/bot skeleton, setup checker, tests.
 
-**Phase 2 — live loop on the owner's PC (next):**
-1. Verify `MT5Feed` on Windows: connection, symbol names, **server-time offset**
-   (MT5 bar times are broker server time, not UTC), closed-candle timing.
-2. `scripts/run_live.py`: wait for each candle close (+ ~1–2 s), `feed.candles(pair,
-   lookback)`, `agent.on_closed_candle(pair, candles, feed.lag_seconds(pair))`;
-   heartbeat every `heartbeat_minutes`; restart on errors; start via Task Scheduler.
-3. Two-stage signal: heads-up at ~:45 from ticks (setup forming), then GO/CANCEL at
-   candle close (code only). Keep the gate authoritative.
-4. Run the Telegram bot in the same process (async) or alongside; prompt for the
-   broker result after expiry; daily summary at session end.
-5. Automatic economic calendar (e.g. Forex Factory weekly feed — verify format and
-   terms first) → `NewsEvent`s; keep manual `/news` as fallback.
+**Phase 2 — live loop (code done, needs verification on the owner's PC):**
+`scripts/run_live.py` / `start_agent.bat` → `LiveRunner`: sleeps to each candle close
+(+`settle_seconds`), waits for the feed to publish the closed candle, runs every agent,
+GO/CANCEL after a ~:45 heads-up (`Agent.preview` on the forming candle — records
+nothing), broker-result prompts after expiry, heartbeat, session-start briefing,
+session-end summary + drift check + nightly review; errors are alerted with backoff,
+never fatal. Modes: live (approved only), `--shadow-drafts` (drafts silently as
+shadow next to live = champion/challenger), `--shadow-only` (plumbing test, visible
+SHADOW signals). Still to verify on Windows: `MT5Feed` connection, symbol names,
+**server-time offset**, closed-candle timing, Task Scheduler start. The economic
+calendar (`calendar_feed.py`) is off until its unofficial format and terms are checked.
 
-**Phase 3 — AI brain (after setups prove themselves):**
-- Fast model: confirm/veto a candidate with a hard timeout (~6–8 s); timeout ⇒ SKIP.
-  Input: candidate, feature snapshot, the setup's KSoR text, similar past episodes
-  from SSoR. Output: strict JSON `{decision: CONFIRM|VETO, reason, confidence_adj}`.
-- Balanced model: pre-session briefing (news, regime per pair, which setups to watch).
-- Deep model: nightly review → reflections + lesson proposals (min 30 similar trades).
-- Configure model IDs in settings (do not hard-code them); daily API budget cap
-  enforced by the gate; record AI input/output in `signals.brain_json`.
-- Measure value: log rules-only vs rules+AI decisions; keep the AI only if it helps.
+**Phase 3 — AI brain (code done, off by default):** enable only after setups prove
+themselves (`brain.enabled`, `ANTHROPIC_API_KEY`, `BRAIN_MODEL_FAST/_BALANCED/_DEEP` in
+`.env` — never commit model IDs). Fast tier confirms/vetoes a gate-approved candidate
+with a hard timeout and no retries; timeout/refusal/budget ⇒ `on_unavailable`
+(`skip` default). Vetoed or skipped candidates are recorded as `shadow` with
+`brain_json` so the weekly report can compare CONFIRM vs VETO outcomes — keep the AI
+only if CONFIRM clearly beats VETO. Balanced tier: briefing commentary. Deep tier:
+nightly reflections; proposals need ≥ `proposal_min_evidence` signal ids (else saved
+as an "idea" reflection). Every call is in SSoR `ai_usage`; daily call/token caps.
 
-**Phase 4 — learning loop:** proposals → human approval → KSoR version bump →
-shadow (champion/challenger) → promote; drift detection (rolling win rate below
-break-even ⇒ auto-pause setup + alert); confidence calibration.
+**Phase 4 — learning loop (code done):** `setup_health` (last 50 live results,
+Wilson range vs break-even) → DRIFT pauses the setup in `control.paused_setups`
+(deterministic DSoR code, alert, `/unpause`). Telegram `/setups /proposals /week`;
+proposal approve/reject is recorded in SSoR — turning an approved proposal into a new
+draft KSoR version is a human/Claude Code task (backtest + Ustad approval).
 
-**Phase 5 — extras:** Streamlit dashboard, ML meta-labeling, VPS (Windows, for MT5).
+**Phase 5 — later, once real data exists:** Streamlit dashboard (the weekly report
+covers the basics now), ML meta-labeling on SSoR history, Windows VPS for MT5,
+tick-data backtests with the human's entry delay.
 
 ## Working with KSoR
 

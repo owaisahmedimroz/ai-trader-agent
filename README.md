@@ -21,15 +21,31 @@ Ustad ke rules (KSoR) → Live price (MT5) → Jaanch (session, news, trend, set
 | **SSoR** — Case file | Har signal, aap ka action, nateeja, review (badla nahi ja sakta) | `data/ssor.sqlite3` |
 | **DSoR** — Ijazat | Loss limit, cooldown, news blackout, /stop — AI bhi nahi tor sakta | `trader_agent/gate.py` |
 
-## Abhi kya ban chuka hai (Phase 0–1)
+## Kya ban chuka hai
 
+**Phase 0–1 — bunyaad**
 - ✅ Rules ki zabaan (YAML) + misaal setup `R00` (sirf misaal, Ustad ka rule nahi)
 - ✅ 60+ features: RSI, EMA, ATR, ADX, Bollinger, patterns, pichle din ka high/low, sessions, 15m/1h trend…
 - ✅ Risk gate: session, news, daily loss limit, cooldown, payout, /stop /pause
-- ✅ SSoR database (append-only)
-- ✅ Backtester + HTML report (95% range, break-even, mahine-wise, faisla KEEP/WATCH/DROP)
-- ✅ Replay (purana data live jaisa chala kar dekhna), Telegram bot (buttons, commands)
-- ⏳ Phase 2: MT5 se live data + live loop · Phase 3: AI dimaagh · Phase 4: seekhne ka loop
+- ✅ SSoR database (append-only), backtester + HTML report (KEEP/WATCH/DROP), replay
+
+**Phase 2 — live loop** (code tayyar; aapke PC par MT5 ke saath verify hona baqi)
+- ✅ Har minute analysis, ~:45 par ⚡ TAYYAR, candle band par GO ya ❌ CANCEL
+- ✅ Expiry ke baad Quotex result ke buttons, har 15 min "zinda hun", session briefing aur khulasa
+- ✅ `start_agent.bat` + Task Scheduler, shadow test mode, economic calendar (band, verify ke baad on)
+
+**Phase 3 — AI dimaagh** (code tayyar, default band)
+- ✅ Claude sirf CONFIRM/VETO karta hai, 8 sec timeout, roz ki limit, har call ka record
+- ✅ VETO wale signals bhi record — weekly report batata hai AI faida de raha hai ya nahi
+- ✅ Briefing commentary, raat ka review, sabaq ki tajaweez (30+ trades ka saboot)
+
+**Phase 4 — seekhna** (code tayyar)
+- ✅ Kharab chalne wala setup khud ruk jata hai (drift), `/setups /unpause /proposals /week`
+- ✅ Hafte ka report: setups, AI ki value, discipline, loss reviews
+
+**Phase 5 — baad mein** (jab asli data jama ho): dashboard, ML, VPS, tick-data backtest.
+
+Live chalane ka poora tareeqa: **`docs/LIVE.md`**.
 
 ## Windows par setup (ek dafa)
 
@@ -76,7 +92,7 @@ python scripts/replay.py --data data/history/DAT_ASCII_EURUSD_M1_2025.csv --pair
 1. Telegram par **@BotFather** → `/newbot` → token `.env` mein `TELEGRAM_BOT_TOKEN=` ke aage.
 2. Bot chalayein: `python -m trader_agent.notifier.telegram_bot`
 3. Apne bot ko `/start` bhejein — woh aap ki **chat ID** batayega → `.env` mein `TELEGRAM_CHAT_ID=`.
-4. Bot dobara chalayein. Commands: `/status /today /last /why /pause /stop /resume /payout /news`
+4. Bot dobara chalayein. Commands: `/status /today /last /why /pause /stop /resume /payout /news /setups /unpause /proposals /week`
 
 Bot sirf aap ki chat ko jawab deta hai.
 

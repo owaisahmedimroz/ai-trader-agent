@@ -1,7 +1,9 @@
-"""Human controls that the risk gate obeys: /stop, /pause, /payout, /news.
+"""Controls the risk gate obeys: /stop, /pause, /payout, /news and paused setups.
 
 Kept in a small JSON file (data/control.json) so the Telegram bot and the agent
-loop can share it even when they run as separate programs.
+loop can share it even when they run as separate programs. Humans change it via
+Telegram; the deterministic drift check (learning.py) may pause a setup. The AI
+never writes it.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ class Control:
     paused_until: str | None = None  # ISO UTC
     payouts: dict[str, float] = field(default_factory=dict)
     news: list[dict] = field(default_factory=list)  # {time_utc, currency, impact, title}
+    paused_setups: dict[str, str] = field(default_factory=dict)  # setup id -> reason
 
     @classmethod
     def load(cls, path: Path | str) -> "Control":
@@ -38,6 +41,7 @@ class Control:
             paused_until=raw.get("paused_until"),
             payouts={k.upper(): float(v) for k, v in (raw.get("payouts") or {}).items()},
             news=list(raw.get("news") or []),
+            paused_setups={k.upper(): str(v) for k, v in (raw.get("paused_setups") or {}).items()},
         )
 
     def save(self, path: Path | str) -> None:

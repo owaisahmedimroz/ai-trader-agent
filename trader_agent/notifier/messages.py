@@ -7,6 +7,7 @@ from ..timeutil import DISPLAY_TZ, to_display
 ACTIONS = ("TAKEN", "SKIPPED")
 RESULTS = ("WIN", "LOSS", "DRAW")
 REVIEWS = ("normal", "agent_error", "execution_error", "news_spike")
+PROPOSAL_DECISIONS = ("approved", "rejected")
 
 
 def tz_label(tz: str) -> str:
@@ -30,9 +31,41 @@ def format_signal(signal: dict, setup_name: str | None = None, tz: str = DISPLAY
     ]
     if signal.get("payout"):
         lines.append(f"💰 Payout: {signal['payout']:.0%}")
+    brain = signal.get("brain") or {}
+    if brain.get("decision") == "CONFIRM":
+        lines.append(f"🤖 AI: {brain.get('reason', '')} ({brain.get('confidence', '?')})")
+    elif brain.get("decision") == "UNAVAILABLE":
+        lines.append("🤖 AI: jawab nahi aaya — sirf rules ka signal")
     mode = signal.get("mode", "live")
     lines.append(f"🧾 Signal #{signal['id']}" + ("" if mode == "live" else f" ({mode.upper()})"))
+    if mode != "live":
+        lines.append("⚠️ Test signal — asli trade na lagayein")
     return "\n".join(lines)
+
+
+def format_heads_up(candidate, tz: str = DISPLAY_TZ) -> str:
+    arrow = "🟢 CALL" if candidate.direction == "CALL" else "🔴 PUT"
+    return (
+        f"⚡ TAYYAR RAHEIN: {arrow} {pair_label(candidate.pair)} — setup ban raha hai ({candidate.setup_id})\n"
+        f"{to_display(candidate.signal_time, tz)} {tz_label(tz)} par GO ya CANCEL aayega. Abhi trade na lagayein."
+    )
+
+
+def format_cancel(pair: str, setup_id: str, signal_time, tz: str = DISPLAY_TZ) -> str:
+    return f"❌ CANCEL — {pair_label(pair)} ({setup_id}) {to_display(signal_time, tz)}: setup poora nahi hua. Trade na lagayein."
+
+
+def format_result_prompt(signal: dict, tz: str = DISPLAY_TZ) -> str:
+    return (
+        f"🧾 #{signal['id']} {signal['direction']} {pair_label(signal['pair'])} "
+        f"({to_display(signal['signal_time'], tz, '%H:%M')} {tz_label(tz)}) — Quotex par kya nateeja aaya?"
+    )
+
+
+def format_heartbeat(info: dict) -> str:
+    lag = info.get("lag")
+    lag_text = "—" if lag is None else f"{lag:.1f}s"
+    return f"🟢 Zinda hun | {', '.join(info.get('pairs', []))} | aaj {info.get('signals', 0)} signals | data delay {lag_text}"
 
 
 def action_buttons(signal_id: int) -> list[list[tuple[str, str]]]:
@@ -50,12 +83,17 @@ def review_buttons(signal_id: int) -> list[list[tuple[str, str]]]:
     ]
 
 
+def proposal_buttons(proposal_id: int) -> list[list[tuple[str, str]]]:
+    return [[("✅ Approve", f"prop:{proposal_id}:approved"), ("❌ Reject", f"prop:{proposal_id}:rejected")]]
+
+
 def parse_callback(data: str) -> tuple[str, int, str]:
+    """'act:12:TAKEN' -> ('act', 12, 'TAKEN'). The number is a signal id (a proposal id for 'prop')."""
     parts = (data or "").split(":")
     if len(parts) != 3 or not parts[1].isdigit():
         raise ValueError(f"bad button data {data!r}")
     kind, signal_id, value = parts[0], int(parts[1]), parts[2]
-    allowed = {"act": ACTIONS, "res": RESULTS, "rev": REVIEWS}.get(kind)
+    allowed = {"act": ACTIONS, "res": RESULTS, "rev": REVIEWS, "prop": PROPOSAL_DECISIONS}.get(kind)
     if allowed is None or value not in allowed:
         raise ValueError(f"bad button data {data!r}")
     return kind, signal_id, value
@@ -104,6 +142,10 @@ def help_text() -> str:
             "/resume — dobara shuru",
             "/payout EURUSD 82 — Quotex ka payout batayein",
             "/news 18:30 USD high CPI — news ka waqt (PKT) — us waqt signals band",
+            "/setups — har setup ki sehat (drift)",
+            "/unpause R07 — ruka hua setup dobara chalayein",
+            "/proposals — AI ke sabaq ki tajaweez (approve/reject)",
+            "/week — pichle 7 din ka khulasa",
         ]
     )
 

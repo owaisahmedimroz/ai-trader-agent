@@ -21,6 +21,33 @@ paths:
 live:
   lookback_bars: 5000            # har minute features ke liye candles (H1 trend ko pura warm-up chahiye)
   heartbeat_minutes: 15          # "zinda hun" message ka waqfa
+  heads_up: true                 # candle band hone se ~15 sec pehle "TAYYAR RAHEIN"
+  heads_up_second: 45
+  settle_seconds: 2              # candle band hone ke baad itna ruk kar data lein
+  result_prompt_delay_seconds: 20  # expiry ke baad Quotex ka result poochne se pehle
+
+calendar:
+  # Forex Factory ka UNOFFICIAL weekly feed. Enable karne se pehle browser mein URL khol kar
+  # format aur site ki terms check karein. Band ho to Telegram /news se news daalein.
+  enabled: false
+  url: "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+  refresh_hours: 6
+
+brain:
+  # AI sirf gate se paas hue signal ko CONFIRM ya VETO karta hai. Pehle setups sabit hon, phir on karein.
+  # Model IDs yahan NAHI — .env mein BRAIN_MODEL_FAST / BRAIN_MODEL_BALANCED / BRAIN_MODEL_DEEP.
+  enabled: false
+  on_unavailable: skip           # AI jawab na de: skip (signal nahi) | rules_only (bina AI bhej do)
+  confirm_timeout_seconds: 8
+  max_calls_per_day: 300
+  max_tokens_per_day: 2000000
+  effort: {confirm: low, briefing: medium, review: high}
+
+learning:
+  drift_window: 50               # setup ki sehat pichle itne live signals se
+  drift_min_trades: 30           # is se kam par faisla nahi
+  auto_pause: true               # range break-even se neeche ho to setup khud ruk jaye
+  proposal_min_evidence: 30      # AI ki tajweez ke liye kam az kam itne trades ka saboot
 
 mt5:
   # Broker ke symbol naam kabhi mukhtalif hote hain (jaise EURUSDm)

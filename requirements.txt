@@ -5,5 +5,7 @@ python-dotenv>=1.0
 # Windows par timezones (zoneinfo) ke liye zaroori
 tzdata>=2024.1
 python-telegram-bot>=21,<23
+# Claude API — sirf jab AI brain on ho (Phase 3)
+anthropic>=2,<3
 # MT5 price feed — sirf Windows par install hota hai
 MetaTrader5; sys_platform == "win32"

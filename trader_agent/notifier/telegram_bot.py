@@ -16,15 +16,24 @@ import pandas as pd
 from ..config import Settings, load_secrets, load_settings
 from ..control import Control
 from ..ksor import KsorError, load_risk_policy, load_setups
+from ..learning import setup_health, weekly_report
 from ..news import parse_manual
 from ..ssor import SSoR
 from ..timeutil import SessionBook, to_display
 from .actions import apply_callback, parse_pause, parse_payout
-from .messages import format_day_summary, format_signal_detail, format_status, help_text, pair_label, tz_label
+from .messages import (
+    format_day_summary,
+    format_signal_detail,
+    format_status,
+    help_text,
+    pair_label,
+    proposal_buttons,
+    tz_label,
+)
 
 
 def control_path(settings: Settings) -> Path:
-    return settings.db_path.parent / "control.json"
+    return settings.control_path
 
 
 def _markup(buttons):
@@ -205,9 +214,58 @@ def build_application(token: str, chat_id: str | None, settings: Settings):
         await query.edit_message_reply_markup(reply_markup=None)  # no double taps
         await query.message.reply_text(text, reply_markup=_markup(buttons))
 
+    def approved_setups():
+        try:
+            return load_setups(settings.setups_dir)
+        except KsorError:
+            return []
+
+    async def setups_cmd(update, context):
+        control = Control.load(cpath)
+        lines = ["🧩 Setups ki sehat (pichle 50 live signals):"]
+        for setup in approved_setups():
+            if setup.id in control.paused_setups:
+                lines.append(f"⛔ {setup.id}: ruka hua — {control.paused_setups[setup.id]}")
+            else:
+                payout = control.payouts.get(setup.pairs[0], settings.payout_default)
+                lines.append(setup_health(ssor, setup.id, payout, int(settings.learning["drift_window"]),
+                                          int(settings.learning["drift_min_trades"])).line())
+        if len(lines) == 1:
+            lines.append("Koi approved setup nahi.")
+        await update.message.reply_text("\n".join(lines))
+
+    async def unpause(update, context):
+        setup_id = (context.args[0] if context.args else "").upper()
+        control = Control.load(cpath)
+        if setup_id not in control.paused_setups:
+            await update.message.reply_text(f"{setup_id or '?'} ruka hua nahi hai. Format: /unpause R07")
+            return
+        control.paused_setups.pop(setup_id)
+        control.save(cpath)
+        audit(f"/unpause {setup_id}")
+        await update.message.reply_text(f"🟢 {setup_id} dobara chalu. Agar phir drift hua to khud ruk jayega.")
+
+    async def proposals(update, context):
+        pending = ssor.pending_proposals()
+        if not pending:
+            await update.message.reply_text("Koi tajweez baqi nahi.")
+            return
+        for proposal in pending[:5]:
+            await update.message.reply_text(
+                f"💡 Tajweez #{proposal['id']} ({proposal['sample_size']} trades ka saboot):\n{proposal['pattern']}",
+                reply_markup=_markup(proposal_buttons(proposal["id"])),
+            )
+
+    async def week(update, context):
+        end = now()
+        report = weekly_report(ssor, end - pd.Timedelta(days=7), end, settings.payout_default,
+                               [s.id for s in approved_setups()])
+        await update.message.reply_text(report[:3900])
+
     commands = {
         "start": start, "help": help_cmd, "status": status, "today": today, "last": last, "why": why,
         "pause": pause, "stop": stop, "resume": resume, "payout": payout, "news": news,
+        "setups": setups_cmd, "unpause": unpause, "proposals": proposals, "week": week,
     }
     for name, handler in commands.items():
         app.add_handler(CommandHandler(name, handler, filters=only_owner))

@@ -50,9 +50,15 @@ class MT5Feed(Feed):
         return self._offset
 
     def candles(self, pair: str, count: int) -> pd.DataFrame:
-        name = self.symbol(pair)
         # start_pos=1 skips the candle that is still forming (position 0)
-        rates = self.mt5.copy_rates_from_pos(name, self.mt5.TIMEFRAME_M1, 1, count)
+        return self._rates(pair, start_pos=1, count=count)
+
+    def candles_with_forming(self, pair: str, count: int) -> pd.DataFrame:
+        return self._rates(pair, start_pos=0, count=count + 1)
+
+    def _rates(self, pair: str, start_pos: int, count: int) -> pd.DataFrame:
+        name = self.symbol(pair)
+        rates = self.mt5.copy_rates_from_pos(name, self.mt5.TIMEFRAME_M1, start_pos, count)
         if rates is None or len(rates) == 0:
             raise RuntimeError(f"MT5 se {name} ki candles nahi mili: {self.mt5.last_error()}")
         frame = pd.DataFrame(rates)

@@ -1,10 +1,12 @@
 """The agent loop's core: what happens each time an M1 candle closes.
 
-    candles -> features -> KSoR setups -> DSoR gate -> SSoR record -> notify human
+    candles -> features -> KSoR setups -> DSoR gate -> [AI confirm/veto] -> SSoR record -> notify human
 
-Replay (scripts/replay.py) and the live loop (Phase 2) both call
-`Agent.on_closed_candle`, so they behave identically. The AI "brain" (Phase 3)
-will slot in after the gate as an extra confirm/veto step; it can never skip it.
+Replay (scripts/replay.py) and the live loop (trader_agent/live.py) both call
+`Agent.on_closed_candle`, so they behave identically. The optional AI brain runs
+only after the gate allowed a candidate; it can veto but never skip the gate.
+A vetoed candidate is still recorded (mode 'shadow', not sent) so its result can
+later show whether the AI's vetoes were worth it.
 """
 
 from __future__ import annotations
@@ -20,11 +22,22 @@ from .control import Control
 from .features import build_features, feature_names
 from .gate import DayState, RiskGate
 from .ksor import RiskPolicy, Setup, ksor_commit, load_risk_policy, load_setups
-from .rules_engine import candidates_at
+from .news import NewsEvent
+from .rules_engine import Candidate, candidates_at
 from .ssor import SSoR, SignalRecord
 from .timeutil import SessionBook
 
 MODES = ("live", "shadow", "replay")
+
+
+class NullNotifier:
+    """Records quietly (e.g. draft setups running in shadow next to the live agent)."""
+
+    def send_signal(self, signal: dict, setup_name: str | None = None) -> None:
+        pass
+
+    def send_text(self, text: str, buttons=None) -> None:
+        pass
 
 
 @dataclass
@@ -40,6 +53,8 @@ class Agent:
     control_path: Path | None = None
     ksor_version: str = "unknown"
     count_only_taken: bool = False  # live: only trades the human took count toward loss limits
+    brain: object | None = None  # brain.confirm.Confirmer, Phase 3 (optional)
+    calendar_events: list[NewsEvent] = field(default_factory=list)  # from the economic calendar
     state: DayState = field(default_factory=DayState)
     _pending: list[dict] | None = field(default=None, repr=False)  # signals waiting for the feed result
 
@@ -52,13 +67,16 @@ class Agent:
         include_drafts: bool = False,
         db_path: Path | str | None = None,
         control_path: Path | str | None = None,
+        statuses: tuple[str, ...] | None = None,
+        brain=None,
     ) -> "Agent":
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
-        if mode == "live" and include_drafts:
+        if statuses is None:
+            statuses = ("approved", "draft") if include_drafts else ("approved",)
+        if mode == "live" and set(statuses) != {"approved"}:
             raise ValueError("live mode only runs approved setups")
         sessions = SessionBook.from_yaml(settings.sessions_path)
-        statuses = ("approved", "draft") if include_drafts else ("approved",)
         setups = load_setups(settings.setups_dir, statuses, feature_names(sessions), sessions.names())
         policy = load_risk_policy(settings.risk_policy_path, sessions.names())
         if mode == "live" and policy.status != "approved":
@@ -75,6 +93,7 @@ class Agent:
             control_path=Path(control_path) if control_path else None,
             ksor_version=ksor_commit(settings.ksor_dir),
             count_only_taken=(mode == "live"),
+            brain=brain,
         )
 
     # ---- state ------------------------------------------------------------------
@@ -85,6 +104,9 @@ class Agent:
     def payout_for(self, pair: str, control: Control | None = None) -> float:
         control = control or self.control()
         return control.payouts.get(pair.upper(), self.settings.payout_default)
+
+    def setup(self, setup_id: str) -> Setup:
+        return next(s for s in self.setups if s.id == setup_id)
 
     def rebuild_state(self, now: pd.Timestamp, control: Control) -> DayState:
         """DSoR state for `now`, rebuilt from SSoR records and the control file."""
@@ -126,6 +148,8 @@ class Agent:
             if signal["pair"] != pair.upper() or exit_bar > candles.index[-1]:
                 still_waiting.append(signal)  # other pair, or still running
                 continue
+            if self.ssor.has_feed_outcome(signal["id"]):
+                continue  # already resolved (e.g. by another agent sharing the database)
             if entry_bar not in candles.index or exit_bar not in candles.index:
                 continue  # data gap: no feed result; the human's broker result still counts
             entry_price = float(candles.at[entry_bar, "open"])
@@ -136,54 +160,97 @@ class Agent:
         self._pending = still_waiting
         return resolved
 
-    def _might_signal(self, now: pd.Timestamp) -> bool:
+    def might_signal(self, now: pd.Timestamp) -> bool:
         if not self.sessions.market_open(now):
             return False
         allowed = self.policy.allowed_sessions
         return not allowed or any(self.sessions.contains(name, now) for name in allowed)
 
+    def _allowed_candidates(self, pair: str, candles: pd.DataFrame, now, feed_lag_seconds, log: bool):
+        """Candidates on the latest candle that the gate allows (and, if `log`, record every decision)."""
+        features = build_features(candles, pair, self.sessions, self.settings.display_timezone)
+        candidates = candidates_at(self.setups, features, self.sessions, pair)
+        if not candidates:
+            return [], None, None
+        control = self.control()
+        self.gate.events = control.events() + list(self.calendar_events)
+        payout = self.payout_for(pair, control)
+        allowed = []
+        for candidate in candidates:
+            if candidate.setup_id in control.paused_setups:
+                reasons = (f"setup paused: {control.paused_setups[candidate.setup_id]}",)
+            else:
+                state = self.rebuild_state(now, control)
+                decision = self.gate.check(now=now, pair=pair, state=state, payout=payout, feed_lag_seconds=feed_lag_seconds)
+                reasons = decision.reasons
+            if log:
+                self.ssor.log_decision(now, pair, candidate.setup_id, "blocked" if reasons else "signal", reasons)
+            if not reasons:
+                allowed.append(candidate)
+                if not log:
+                    break  # preview: one candidate per pair is enough for a heads-up
+        return allowed, control, payout
+
+    def preview(self, pair: str, candles_with_forming: pd.DataFrame) -> list[Candidate]:
+        """Heads-up: would a setup fire if the still-forming candle closed like this? Records nothing."""
+        if candles_with_forming.empty:
+            return []
+        now = candles_with_forming.index[-1] + pd.Timedelta(minutes=1)
+        if not self.might_signal(now):
+            return []
+        allowed, _, _ = self._allowed_candidates(pair.upper(), candles_with_forming, now, None, log=False)
+        return allowed
+
     def on_closed_candle(self, pair: str, candles: pd.DataFrame, feed_lag_seconds: float | None = None) -> list[int]:
-        """Call once per closed M1 candle with the latest candles (oldest first). Returns new signal ids."""
+        """Call once per closed M1 candle with the latest candles (oldest first). Returns ids of signals sent."""
         if candles.empty:
             return []
         pair = pair.upper()
         now = candles.index[-1] + pd.Timedelta(minutes=1)
         self.resolve_outcomes(pair, candles)
-        if not self._might_signal(now):
+        if not self.might_signal(now):
             return []  # nothing can be sent now: skip the feature work
-        features = build_features(candles, pair, self.sessions, self.settings.display_timezone)
-        candidates = candidates_at(self.setups, features, self.sessions, pair)
-        if not candidates:
-            return []
-        control = self.control()
-        self.gate.events = control.events()
-        payout = self.payout_for(pair, control)
-        new_ids = []
-        for candidate in candidates:
-            state = self.rebuild_state(now, control)
-            decision = self.gate.check(now=now, pair=pair, state=state, payout=payout, feed_lag_seconds=feed_lag_seconds)
-            self.ssor.log_decision(now, pair, candidate.setup_id, "signal" if decision.allowed else "blocked", decision.reasons)
-            if not decision.allowed:
+        allowed, control, payout = self._allowed_candidates(pair, candles, now, feed_lag_seconds, log=True)
+        sent = []
+        for candidate in allowed:
+            if sent:  # one signal per pair per candle; the gate's spacing rule would block the rest anyway
+                self.ssor.log_decision(now, pair, candidate.setup_id, "blocked", ["another setup already signalled this candle"])
                 continue
-            record = SignalRecord(
-                mode=self.mode,
-                pair=pair,
-                setup_id=candidate.setup_id,
-                setup_version=candidate.setup_version,
-                direction=candidate.direction,
-                bar_time=candidate.bar_time,
-                signal_time=candidate.signal_time,
-                entry_deadline=candidate.signal_time + pd.Timedelta(seconds=self.policy.entry_window_seconds),
-                expiry_minutes=candidate.expiry_minutes,
-                payout=payout,
-                features=candidate.features,
-                gate={"allowed": True, "policy_version": self.policy.version, "policy_status": self.policy.status},
-                ksor_commit=self.ksor_version,
-            )
-            signal_id = self.ssor.record_signal(record, created_at=now if self.mode == "replay" else None)
-            new_ids.append(signal_id)
-            signal = self.ssor.get_signal(signal_id)
-            if self._pending is not None:
-                self._pending.append(signal)
-            self.notifier.send_signal(signal, candidate.setup_name)
-        return new_ids
+            verdict = self._ask_brain(candidate, payout, now)
+            mode = self.mode if verdict is None or verdict.allowed else "shadow"
+            signal_id = self._record(candidate, payout, now, mode, verdict)
+            if mode != self.mode:
+                self.ssor.log_decision(now, pair, candidate.setup_id, "blocked", [f"AI {verdict.decision}: {verdict.reason}"])
+                continue
+            sent.append(signal_id)
+            self.notifier.send_signal(self.ssor.get_signal(signal_id), candidate.setup_name)
+        return sent
+
+    def _ask_brain(self, candidate: Candidate, payout: float, now):
+        if self.brain is None or self.mode == "replay":
+            return None
+        episodes = self.ssor.setup_outcomes(candidate.setup_id, modes=("live", "shadow"), limit=30, before=now)
+        return self.brain.decide(setup=self.setup(candidate.setup_id), features=candidate.features,
+                                 episodes=episodes, payout=payout, now=now)
+
+    def _record(self, candidate: Candidate, payout: float, now, mode: str, verdict) -> int:
+        record = SignalRecord(
+            mode=mode,
+            pair=candidate.pair,
+            setup_id=candidate.setup_id,
+            setup_version=candidate.setup_version,
+            direction=candidate.direction,
+            bar_time=candidate.bar_time,
+            signal_time=candidate.signal_time,
+            entry_deadline=candidate.signal_time + pd.Timedelta(seconds=self.policy.entry_window_seconds),
+            expiry_minutes=candidate.expiry_minutes,
+            payout=payout,
+            features=candidate.features,
+            gate={"allowed": True, "policy_version": self.policy.version, "policy_status": self.policy.status},
+            brain=None if verdict is None else verdict.as_json(),
+            ksor_commit=self.ksor_version,
+        )
+        signal_id = self.ssor.record_signal(record, created_at=now if self.mode == "replay" else None)
+        if self._pending is not None:
+            self._pending.append(self.ssor.get_signal(signal_id))
+        return signal_id

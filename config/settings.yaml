@@ -1,0 +1,29 @@
+# AI Trader Agent — general settings.
+# Secrets (API keys, tokens, passwords) yahan NAHI — woh .env mein jate hain.
+
+pairs: [EURUSD, GBPUSD]
+
+# Messages aur reports isi timezone mein dikhaye jate hain (andar sab UTC hai)
+display_timezone: Asia/Karachi
+
+# Quotex ka payout (0.80 = 80%). Live mein Telegram /payout se badla ja sakta hai.
+payout_default: 0.80
+
+# Data kahan se aaye: replay (CSV file) | mt5 (Windows, Phase 2)
+feed: replay
+
+paths:
+  db: data/ssor.sqlite3          # SSoR (case file) database
+  ksor: ksor                     # KSoR (handbook) folder
+  reports: reports
+  history: data/history          # purana data (backtest ke liye)
+
+live:
+  lookback_bars: 5000            # har minute features ke liye candles (H1 trend ko pura warm-up chahiye)
+  heartbeat_minutes: 15          # "zinda hun" message ka waqfa
+
+mt5:
+  # Broker ke symbol naam kabhi mukhtalif hote hain (jaise EURUSDm)
+  symbols: {EURUSD: EURUSD, GBPUSD: GBPUSD}
+  # Broker server ka UTC se farq (ghante). Khali = khud andaza (check_setup --mt5 se verify karein)
+  server_utc_offset_hours:

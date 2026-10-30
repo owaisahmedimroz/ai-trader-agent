@@ -1,0 +1,30 @@
+# Risk policy — DSoR (risk gate) inhi hadon ko lagu karta hai.
+# AI in hadon ko kabhi nahi tor sakta. Ustad ke saath final karke
+# status: approved, approved_by aur approved_on bharein, aur CHANGELOG mein likhein.
+
+version: 1
+status: draft
+approved_by: null
+approved_on: null
+
+# Sirf in sessions mein signal (ksor/sessions.yaml ke naam)
+allowed_sessions: [london_newyork]
+
+max_signals_per_day: 15          # din mein zyada se zyada signals
+max_losses_per_day: 3            # itne loss ke baad din band
+cooldown:
+  after_consecutive_losses: 2    # itne loss lagatar ...
+  minutes: 10                    # ... to itne minute ka break
+min_minutes_between_signals: 2   # ek pair par do signals ka kam se kam farq
+
+news_blackout:
+  impact: [high]                 # kaunsi news par signal band
+  minutes_before: 15             # Ustad se confirm karein
+  minutes_after: 15
+
+max_feed_lag_seconds: 5          # data purana ho to signal nahi
+min_payout: 0.75                 # is se kam payout par signal nahi (break-even 57% ho jata hai)
+entry_window_seconds: 10         # signal ke baad itne second mein trade, warna chhor dein
+
+stake_percent: 1.0               # yaad-dehani: har trade mein balance ka %. Agent paisa nahi lagata.
+martingale: false                # hamesha false — loss ke baad stake barhana mana hai

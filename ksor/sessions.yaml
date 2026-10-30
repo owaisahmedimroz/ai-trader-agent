@@ -1,0 +1,19 @@
+# Forex sessions — har market ke APNE local time mein.
+# Code inhein zoneinfo se UTC/PKT mein badalta hai, is liye London/New York/
+# Sydney ke daylight-saving (garmi/sardi) ka farq khud handle hota hai.
+# Ustad ke kehne par open/close badle ja sakte hain.
+
+version: 1
+
+sessions:
+  sydney:   {tz: Australia/Sydney, open: "08:00", close: "17:00"}
+  tokyo:    {tz: Asia/Tokyo,       open: "09:00", close: "18:00"}
+  london:   {tz: Europe/London,    open: "08:00", close: "17:00"}
+  new_york: {tz: America/New_York, open: "08:00", close: "17:00"}
+
+overlaps:
+  # Sab se zyada movement wala waqt (sardiyon mein taqreeban 18:00–22:00 PKT)
+  london_newyork: [london, new_york]
+
+# Forex ka "din" New York ke 5 PM par badalta hai (daily limits isi se reset hoti hain)
+trading_day_rollover: {tz: America/New_York, time: "17:00"}

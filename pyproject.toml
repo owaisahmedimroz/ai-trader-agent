@@ -1,0 +1,9 @@
+[project]
+name = "ai-trader-agent"
+version = "0.1.0"
+description = "Personal AI trading signal agent: it analyses and signals, a human decides and trades."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

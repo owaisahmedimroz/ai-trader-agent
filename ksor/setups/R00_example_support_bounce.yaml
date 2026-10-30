@@ -1,0 +1,35 @@
+# MISAAL — yeh Ustad ka rule NAHI hai. Sirf format samjhane ke liye.
+# Ustad ke setups aane par is file ko hata dein ya status: retired kar dein.
+# Har field ka matlab ksor/README.md mein hai.
+
+id: R00
+name: "MISAAL: Support bounce in uptrend"
+version: 1
+status: draft                 # draft | approved | retired  (live mein sirf approved)
+direction: CALL               # CALL (upar) | PUT (neeche)
+pairs: [EURUSD, GBPUSD]
+timeframe: M1
+sessions: [london_newyork]    # khali chhorein to har session
+
+# Sab sharten sach hon to signal (AND)
+conditions:
+  - "m15_trend == 'up'"
+  - "rsi_14 < 35"
+  - "low <= pdl + 0.5 * atr_14 or low <= last_swing_low + 0.3 * atr_14"
+  - "bullish_engulfing or pin_bar_bull"
+
+# Inmein se koi bhi sach ho to signal NAHI (OR)
+invalidations:
+  - "vol_state == 'high'"
+  - "candle_range > 3 * atr_14"
+
+expiry_minutes: 1
+entry: next_open              # agli candle khulte hi
+
+approved_by: null
+approved_on: null
+source: "AI assistant ki misaal — Ustad ke setup se badalni hai"
+evidence: "Abhi koi nahi — backtest baqi hai"
+notes: |
+  Sirf format ki misaal. Backtest mein --include-drafts ke saath chalti hai,
+  live mein kabhi nahi (status draft hai).

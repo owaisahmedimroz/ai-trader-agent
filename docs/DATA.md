@@ -12,9 +12,11 @@ qisam ki market (trend, range, tez, sust) shamil ho.
    (folder na ho to bana lein)
 5. Backtest: `--format histdata` (default)
 
-Timezone: HistData apni files ka waqt **EST bina daylight saving (UTC-5)**
-batata hai, aur code isay UTC mein badal deta hai. Agar kabhi shak ho, ek din
-ka data TradingView ke chart se mila kar dekhein; farq ho to `--tz-offset` badlein.
+Timezone: HistData apni documentation mein "EST bina daylight saving" likhta hai,
+lekin 2024–2026 ki files check kin (US NFP ka jhatka garmi aur sardi dono mein
+08:30 par, hafta Sunday 17:00 par khulta hai): files **New York ka local time,
+daylight saving ke saath** hain. Code default yahi maanta hai (`--tz America/New_York`).
+Kisi aur source ka data fixed offset mein ho to `--tz-offset -5` jaisa dein.
 
 HistData ki terms ke mutabiq data personal istemal ke liye hai — aage share na karein.
 

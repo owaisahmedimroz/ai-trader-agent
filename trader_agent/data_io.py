@@ -3,8 +3,10 @@
 Supported formats:
 - histdata: HistData.com "Generic ASCII" M1 files, lines like
   `20250102 000000;1.035030;1.035100;1.034980;1.035060;0`. HistData documents
-  its timestamps as EST *without* daylight saving (UTC-5); verify after
-  downloading (docs/DATA.md).
+  its timestamps as EST without daylight saving, but the 2024–2026 files were
+  checked against US NFP releases (08:30 New York) and weekly opens (Sunday
+  17:00 New York): they are New York local time WITH daylight saving. So the
+  default timezone is America/New_York; `tz_offset_hours` forces a fixed offset.
 - generic: CSV with a header `time,open,high,low,close[,volume]`; `time` in UTC
   (ISO text) unless a timezone is given.
 """
@@ -19,7 +21,7 @@ import pandas as pd
 COLUMNS = ["open", "high", "low", "close"]
 
 
-def load_histdata_m1(path: Path | str, tz_offset_hours: float = -5.0) -> pd.DataFrame:
+def load_histdata_m1(path: Path | str, tz: str = "America/New_York", tz_offset_hours: float | None = None) -> pd.DataFrame:
     raw = pd.read_csv(
         path,
         sep=";",
@@ -28,10 +30,13 @@ def load_histdata_m1(path: Path | str, tz_offset_hours: float = -5.0) -> pd.Data
         dtype={"stamp": str},
     )
     naive = pd.to_datetime(raw["stamp"].str.strip(), format="%Y%m%d %H%M%S")
-    utc = (naive - pd.Timedelta(hours=tz_offset_hours)).dt.tz_localize("UTC")
+    if tz_offset_hours is not None:
+        utc = (naive - pd.Timedelta(hours=tz_offset_hours)).dt.tz_localize("UTC")
+    else:  # DST switches happen early Sunday when forex is closed, so nothing should be ambiguous
+        utc = naive.dt.tz_localize(tz, ambiguous="NaT", nonexistent="NaT").dt.tz_convert("UTC")
     frame = raw[COLUMNS + ["volume"]].astype("float64")
     frame.index = pd.DatetimeIndex(utc, name="time")
-    return frame
+    return frame[frame.index.notna()]
 
 
 def load_generic_csv(path: Path | str, time_column: str = "time", tz: str = "UTC") -> pd.DataFrame:
@@ -47,9 +52,10 @@ def load_generic_csv(path: Path | str, time_column: str = "time", tz: str = "UTC
     return frame
 
 
-def load_candles(path: Path | str, fmt: str = "histdata", tz_offset_hours: float = -5.0) -> pd.DataFrame:
+def load_candles(path: Path | str, fmt: str = "histdata", tz_offset_hours: float | None = None,
+                 tz: str = "America/New_York") -> pd.DataFrame:
     if fmt == "histdata":
-        return load_histdata_m1(path, tz_offset_hours)
+        return load_histdata_m1(path, tz, tz_offset_hours)
     if fmt == "generic":
         return load_generic_csv(path)
     raise ValueError(f"unknown format {fmt!r} (use histdata or generic)")

@@ -1,0 +1,288 @@
+"""
+Amir Fx Bot - Binary options bot for Deriv (WebSocket API)
+
+Strategy : EMA(50) trend filter + RSI(14) pullback, on closed 1-minute candles
+Risk     : fixed stake, daily loss limit, max consecutive losses, cooldown
+Logging  : every trade is saved to trades_log.csv
+
+SETUP
+  pip install websockets pandas
+  export DERIV_TOKEN="your_demo_api_token"     (Windows: set DERIV_TOKEN=...)
+  python amir_fx_bot.py
+
+ALWAYS TEST ON A DEMO ACCOUNT FIRST. Create a token at app.deriv.com
+(Settings > API token) with "Read" and "Trade" scopes.
+Check Deriv's API docs if anything has changed since this was written.
+"""
+
+import asyncio
+import csv
+import json
+import os
+import time
+from datetime import datetime, timezone
+
+import pandas as pd
+import websockets
+
+# ------------------------------ CONFIG ------------------------------
+CONFIG = {
+    "app_id": "1089",                 # default Deriv test app id
+    "token": os.getenv("DERIV_TOKEN", ""),
+    "symbol": "frxEURUSD",            # use "R_100" for 24/7 testing (synthetic)
+    "currency": "USD",
+    "granularity": 60,                # candle size in seconds
+    "history_count": 200,             # candles to preload
+    "duration": 5,                    # contract length
+    "duration_unit": "m",             # m = minutes, t = ticks, s = seconds
+    "stake": 1.00,                    # fixed stake per trade
+    "ema_period": 50,
+    "rsi_period": 14,
+    "rsi_buy_below": 35,              # CALL when price > EMA and RSI < this
+    "rsi_sell_above": 65,             # PUT  when price < EMA and RSI > this
+    "daily_loss_limit": 5.00,         # stop bot for the day after this loss
+    "max_consecutive_losses": 4,      # stop bot after this many losses in a row
+    "cooldown_seconds": 120,          # minimum gap between trades
+    "log_file": "trades_log.csv",
+}
+
+WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={CONFIG['app_id']}"
+
+
+# --------------------------- INDICATORS ----------------------------
+def ema(series: pd.Series, period: int) -> pd.Series:
+    return series.ewm(span=period, adjust=False).mean()
+
+
+def rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, 1e-10)
+    return 100 - (100 / (1 + rs))
+
+
+def get_signal(closes: list):
+    """Return 'CALL', 'PUT' or None based on closed candles."""
+    if len(closes) < CONFIG["ema_period"] + 5:
+        return None
+    s = pd.Series(closes)
+    trend = ema(s, CONFIG["ema_period"]).iloc[-1]
+    r = rsi(s, CONFIG["rsi_period"]).iloc[-1]
+    price = s.iloc[-1]
+
+    if price > trend and r < CONFIG["rsi_buy_below"]:
+        return "CALL"
+    if price < trend and r > CONFIG["rsi_sell_above"]:
+        return "PUT"
+    return None
+
+
+# ----------------------------- LOGGING -----------------------------
+def log_trade(row: dict):
+    exists = os.path.exists(CONFIG["log_file"])
+    with open(CONFIG["log_file"], "a", newline="") as f:
+        w = csv.DictWriter(
+            f,
+            fieldnames=["time_utc", "symbol", "direction", "stake",
+                        "profit", "result", "balance"],
+        )
+        if not exists:
+            w.writeheader()
+        w.writerow(row)
+
+
+def now_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ------------------------------- BOT -------------------------------
+class AmirFxBot:
+    def __init__(self):
+        self.candles = {}            # open_time -> close price
+        self.current_open = None     # open_time of the forming candle
+        self.in_trade = False
+        self.pending_direction = None
+        self.last_trade_ts = 0
+        self.today = datetime.now(timezone.utc).date()
+        self.daily_pnl = 0.0
+        self.consec_losses = 0
+        self.balance = 0.0
+        self.halted = False
+
+    # ---- helpers ----
+    async def send(self, ws, payload: dict):
+        await ws.send(json.dumps(payload))
+
+    def reset_day_if_needed(self):
+        d = datetime.now(timezone.utc).date()
+        if d != self.today:
+            self.today = d
+            self.daily_pnl = 0.0
+            self.consec_losses = 0
+            self.halted = False
+            print(f"[{now_utc()}] New day: counters reset.")
+
+    def risk_ok(self) -> bool:
+        self.reset_day_if_needed()
+        if self.halted:
+            return False
+        if self.daily_pnl <= -CONFIG["daily_loss_limit"]:
+            print(f"[{now_utc()}] Daily loss limit hit. Halting until tomorrow.")
+            self.halted = True
+            return False
+        if self.consec_losses >= CONFIG["max_consecutive_losses"]:
+            print(f"[{now_utc()}] Max consecutive losses hit. Halting until tomorrow.")
+            self.halted = True
+            return False
+        if self.in_trade:
+            return False
+        if time.time() - self.last_trade_ts < CONFIG["cooldown_seconds"]:
+            return False
+        return True
+
+    async def place_trade(self, ws, direction: str):
+        self.in_trade = True
+        self.pending_direction = direction
+        self.last_trade_ts = time.time()
+        print(f"[{now_utc()}] Signal {direction} on {CONFIG['symbol']} - buying...")
+        await self.send(ws, {
+            "buy": 1,
+            "price": CONFIG["stake"],
+            "parameters": {
+                "amount": CONFIG["stake"],
+                "basis": "stake",
+                "contract_type": direction,
+                "currency": CONFIG["currency"],
+                "duration": CONFIG["duration"],
+                "duration_unit": CONFIG["duration_unit"],
+                "symbol": CONFIG["symbol"],
+            },
+        })
+
+    # ---- message handlers ----
+    async def on_authorize(self, ws, msg):
+        acc = msg["authorize"]
+        self.balance = float(acc["balance"])
+        kind = "DEMO" if acc.get("is_virtual") else "REAL"
+        print(f"[{now_utc()}] Authorized: {acc['loginid']} ({kind}) "
+              f"balance {self.balance} {acc['currency']}")
+        if kind == "REAL":
+            print("WARNING: REAL account connected. Test on demo first!")
+        await self.send(ws, {
+            "ticks_history": CONFIG["symbol"],
+            "adjust_start_time": 1,
+            "count": CONFIG["history_count"],
+            "end": "latest",
+            "granularity": CONFIG["granularity"],
+            "style": "candles",
+            "subscribe": 1,
+        })
+
+    async def on_history(self, ws, msg):
+        for c in msg["candles"]:
+            self.candles[int(c["epoch"])] = float(c["close"])
+        self.current_open = max(self.candles)
+        print(f"[{now_utc()}] Loaded {len(self.candles)} candles. Watching market...")
+
+    async def on_ohlc(self, ws, msg):
+        c = msg["ohlc"]
+        open_time = int(c["open_time"])
+        close = float(c["close"])
+
+        # a new candle opened -> previous candle is now closed
+        if self.current_open is not None and open_time != self.current_open:
+            closed = [self.candles[k] for k in sorted(self.candles)
+                      if k < open_time]
+            if self.risk_ok():
+                signal = get_signal(closed)
+                if signal:
+                    await self.place_trade(ws, signal)
+
+        self.candles[open_time] = close
+        self.current_open = open_time
+
+        # keep memory small
+        if len(self.candles) > CONFIG["history_count"] + 50:
+            for k in sorted(self.candles)[:50]:
+                del self.candles[k]
+
+    async def on_buy(self, ws, msg):
+        info = msg["buy"]
+        print(f"[{now_utc()}] Bought contract {info['contract_id']} "
+              f"@ {info['buy_price']}")
+        await self.send(ws, {
+            "proposal_open_contract": 1,
+            "contract_id": info["contract_id"],
+            "subscribe": 1,
+        })
+
+    async def on_contract(self, ws, msg):
+        poc = msg["proposal_open_contract"]
+        if not poc.get("is_sold"):
+            return
+        profit = float(poc["profit"])
+        result = "WIN" if profit > 0 else "LOSS"
+        self.daily_pnl += profit
+        self.consec_losses = 0 if profit > 0 else self.consec_losses + 1
+        self.balance += profit
+        self.in_trade = False
+
+        print(f"[{now_utc()}] {result} {profit:+.2f} | day P&L {self.daily_pnl:+.2f} "
+              f"| losses in a row {self.consec_losses}")
+        log_trade({
+            "time_utc": now_utc(),
+            "symbol": CONFIG["symbol"],
+            "direction": self.pending_direction,
+            "stake": CONFIG["stake"],
+            "profit": profit,
+            "result": result,
+            "balance": round(self.balance, 2),
+        })
+        sub = msg.get("subscription", {}).get("id")
+        if sub:
+            await self.send(ws, {"forget": sub})
+
+    # ---- main loop ----
+    async def run(self):
+        if not CONFIG["token"]:
+            raise SystemExit("Set DERIV_TOKEN environment variable first.")
+
+        while True:
+            try:
+                async with websockets.connect(WS_URL, ping_interval=20) as ws:
+                    await self.send(ws, {"authorize": CONFIG["token"]})
+                    async for raw in ws:
+                        msg = json.loads(raw)
+                        if "error" in msg:
+                            print(f"[{now_utc()}] API error: "
+                                  f"{msg['error'].get('message')}")
+                            if msg.get("msg_type") == "buy":
+                                self.in_trade = False
+                            continue
+
+                        t = msg.get("msg_type")
+                        if t == "authorize":
+                            await self.on_authorize(ws, msg)
+                        elif t == "candles":
+                            await self.on_history(ws, msg)
+                        elif t == "ohlc":
+                            await self.on_ohlc(ws, msg)
+                        elif t == "buy":
+                            await self.on_buy(ws, msg)
+                        elif t == "proposal_open_contract":
+                            await self.on_contract(ws, msg)
+            except (websockets.ConnectionClosed, OSError) as e:
+                print(f"[{now_utc()}] Connection lost ({e}). Reconnecting in 5s...")
+                self.candles.clear()
+                self.current_open = None
+                await asyncio.sleep(5)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(AmirFxBot().run())
+    except KeyboardInterrupt:
+        print("\nAmir Fx Bot stopped.")

@@ -4,16 +4,20 @@ import pytest
 from trader_agent.data_io import clean_candles, load_candles
 
 
-def test_histdata_lines_are_shifted_to_utc(tmp_path):
+def test_histdata_lines_are_new_york_time_with_dst(tmp_path):
+    """Checked on the real 2024–2026 files: the NFP spike sits at 08:30 file time in winter AND summer."""
     path = tmp_path / "DAT_ASCII_EURUSD_M1_2025.csv"
     path.write_text(
-        "20250102 000000;1.035030;1.035100;1.034980;1.035060;0\n"
-        "20250102 000100;1.035060;1.035200;1.035000;1.035150;0\n",
+        "20250110 083000;1.030000;1.036000;1.029000;1.035000;0\n"  # NFP, winter (EST)
+        "20250703 083000;1.178000;1.179000;1.171000;1.172000;0\n",  # NFP, summer (EDT)
         encoding="utf-8",
     )
     candles = load_candles(path, "histdata")
-    assert candles.index[0] == pd.Timestamp("2025-01-02 05:00", tz="UTC")  # EST (UTC-5) -> UTC
-    assert candles["close"].iloc[1] == pytest.approx(1.03515)
+    assert candles.index[0] == pd.Timestamp("2025-01-10 13:30", tz="UTC")
+    assert candles.index[1] == pd.Timestamp("2025-07-03 12:30", tz="UTC")
+    assert candles["close"].iloc[1] == pytest.approx(1.172)
+    fixed = load_candles(path, "histdata", tz_offset_hours=-5)  # the documented-but-wrong reading
+    assert fixed.index[1] == pd.Timestamp("2025-07-03 13:30", tz="UTC")
 
 
 def test_generic_csv(tmp_path):

@@ -33,7 +33,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data", nargs="+", required=True)
     parser.add_argument("--format", default="histdata", choices=["histdata", "generic"])
-    parser.add_argument("--tz-offset", type=float, default=-5.0)
+    parser.add_argument("--tz", default="America/New_York", help="histdata file timezone (default: New York, with DST)")
+    parser.add_argument("--tz-offset", type=float, help="force a fixed UTC offset for histdata files instead of --tz")
     parser.add_argument("--pair", required=True)
     parser.add_argument("--from", dest="start", required=True, help="YYYY-MM-DD (UTC)")
     parser.add_argument("--to", dest="end", required=True, help="YYYY-MM-DD (UTC, exclusive)")
@@ -66,7 +67,7 @@ def main() -> int:
         print("Koi setup nahi. Draft setups ke liye --include-drafts lagayein.")
         return 1
 
-    candles, _ = clean_candles(pd.concat([load_candles(p, args.format, args.tz_offset) for p in args.data]))
+    candles, _ = clean_candles(pd.concat([load_candles(p, args.format, args.tz_offset, args.tz) for p in args.data]))
     start, end = pd.Timestamp(args.start, tz="UTC"), pd.Timestamp(args.end, tz="UTC")
     timeline = candles.index[(candles.index >= start) & (candles.index < end)]
     if timeline.empty:

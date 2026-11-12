@@ -1,0 +1,29 @@
+# Ustad ki file (amir_fx_bot) se: EMA 50 trend filter + RSI 14 pullback.
+# Sharten file se bilkul waisi; koi shart apni taraf se nahi lagayi.
+# Draft: sirf backtest/shadow. Live ke liye Ustad ki approval chahiye.
+
+id: R02
+name: "EMA50 + RSI pullback PUT (1 min)"
+version: 1
+status: draft
+direction: PUT
+pairs: [EURUSD, GBPUSD]       # file mein sirf EURUSD; GBPUSD robustness test ke liye
+timeframe: M1
+sessions: []                  # file mein koi session filter nahi
+
+conditions:                   # price EMA 50 se neeche, RSI 65 se upar
+  - "close < ema_50"
+  - "rsi_14 > 65"
+
+invalidations: []             # file mein koi nahi
+
+expiry_minutes: 1
+entry: next_open
+
+approved_by: null
+approved_on: null
+source: "Ustad, 2026-11-11 — ksor/intake/2026-11-11_amir_fx_bot.py.txt (CALL/PUT sharten, EMA 50, RSI 14, 35/65)"
+evidence: "Backtest 2024–Oct 2026 EUR/USD (10.5 lakh M1 candles): sirf 1–2 signals — RSI<35 par price hamesha EMA50 se neeche hoti hai; 5-min candles par bhi yahi. Tafseel: ksor/intake/2026-11-12_backtest_ema50_rsi.md"
+notes: |
+  File 5-minute contract use karti hai; owner ka plan 1 minute ka hai, is liye dono expiry test ho rahi hain.
+  File ke indicators TradingView-style seeding ke baghair hain; farq warm-up ke baad nazar andaaz karne ke qabil hai.

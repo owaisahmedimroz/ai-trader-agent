@@ -31,7 +31,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data", nargs="+", required=True, help="one or more CSV/ZIP files (same pair)")
     parser.add_argument("--format", default="histdata", choices=["histdata", "generic"])
-    parser.add_argument("--tz-offset", type=float, default=-5.0, help="histdata file timezone vs UTC (default -5)")
+    parser.add_argument("--tz", default="America/New_York", help="histdata file timezone (default: New York, with DST)")
+    parser.add_argument("--tz-offset", type=float, help="force a fixed UTC offset for histdata files instead of --tz")
     parser.add_argument("--pair", required=True)
     parser.add_argument("--setup", action="append", help="only these setup ids (repeatable)")
     parser.add_argument("--include-drafts", action="store_true", help="also test draft setups")
@@ -60,7 +61,7 @@ def main() -> int:
         print("Koi setup nahi mila. Draft setups ke liye --include-drafts lagayein.")
         return 1
 
-    frames = [load_candles(path, args.format, args.tz_offset) for path in args.data]
+    frames = [load_candles(path, args.format, args.tz_offset, args.tz) for path in args.data]
     candles, cleaning = clean_candles(pd.concat(frames))
     if args.start:
         candles = candles[candles.index >= pd.Timestamp(args.start, tz="UTC")]

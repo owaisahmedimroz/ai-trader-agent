@@ -155,6 +155,11 @@ plain-language rule + report to the owner/Ustad. Only a human sets `approved`,
 
 ## Data notes
 
-- HistData M1 files are documented as EST without DST (UTC-5) — `--tz-offset` if a check shows otherwise.
+- HistData M1 files are documented as EST without DST, but the 2024–2026 files are New York local
+  time WITH DST (NFP spike at 08:30 file time in winter and summer; weekly open Sunday 17:00).
+  The loader defaults to `America/New_York`; `--tz-offset` forces a fixed offset for other sources.
+- First real backtest (2026-11-12, `ksor/intake/2026-11-12_backtest_ema50_rsi.md`): Ustad's EMA50+RSI
+  rule almost never fires on M1/M5 (the two conditions exclude each other on one timeframe); a
+  15-min-trend variant wins ~51–53%, below the 55.6% break-even at 80% payout.
 - Data provider prices are not Quotex prices; Quotex OTC prices cannot be obtained at all. Avoid OTC.
 - `data/` and `reports/` are git-ignored (large, machine-specific).

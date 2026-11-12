@@ -161,5 +161,9 @@ plain-language rule + report to the owner/Ustad. Only a human sets `approved`,
 - First real backtest (2026-11-12, `ksor/intake/2026-11-12_backtest_ema50_rsi.md`): Ustad's EMA50+RSI
   rule almost never fires on M1/M5 (the two conditions exclude each other on one timeframe); a
   15-min-trend variant wins ~51–53%, below the 55.6% break-even at 80% payout.
+- Round 2 (`ksor/intake/2026-11-12_backtest_round2.md`): EMA 9/21 crossover (R05/R06, 1-min, any
+  session) wins 48–50% on EUR/USD and GBP/USD — DROP; a Bollinger(20,2) reversal guess ~49–50.5%.
+  Ustad's whole-day news rule is in the risk policy (`news_blackout.whole_day`) but cannot be
+  backtested until there is a historical news calendar.
 - Data provider prices are not Quotex prices; Quotex OTC prices cannot be obtained at all. Avoid OTC.
 - `data/` and `reports/` are git-ignored (large, machine-specific).

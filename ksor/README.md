@@ -12,6 +12,12 @@ likhe rules par chalta hai. Agent khud yahan kuch nahi badalta — woh sirf
 | `CHANGELOG.md` | Har approval/tabdeeli ka record |
 | `intake/` | Ustad ke asal jawab (text, voice notes ki likhai, screenshots) |
 
+## Risk policy: news ka rule
+
+`news_blackout.whole_day: true` → jis din (Pakistan ka calendar din, `day_timezone`)
+pair ki kisi currency ki bari news ho, us **poore din** koi signal nahi (Ustad ka rule).
+`whole_day: false` → sirf news se `minutes_before` pehle aur `minutes_after` baad tak band.
+
 ## Setup ka status (lifecycle)
 
 `draft` → (backtest + Ustad ka review) → `approved` → (kaam karna chhor de) → `retired`
@@ -65,6 +71,7 @@ Kuch aur (imports, attributes, `**`) mana hai — code isay reject kar deta hai.
 | `bullish bearish doji` | Candle ki qisam |
 | `bullish_engulfing bearish_engulfing pin_bar_bull pin_bar_bear` | Patterns |
 | `ema_9 ema_21 ema_50 ema_200` | EMA (TradingView jaisi) |
+| `prev_ema_9 prev_ema_21` | Pichli candle ki EMA — crossover ke liye (`ema_9 > ema_21 and prev_ema_9 <= prev_ema_21`) |
 | `rsi_14 atr_14 adx_14 plus_di minus_di` | Indicators |
 | `bb_mid bb_up bb_low bb_width` | Bollinger (20, 2) |
 | `stoch_k stoch_d` | Stochastic (14, 3, 3) |

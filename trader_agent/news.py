@@ -79,6 +79,17 @@ def blackout_reason(events, pair: str, now, minutes_before: int, minutes_after: 
     return None
 
 
+def day_blackout_reason(events, pair: str, now, tz: str, impacts=("high",)) -> str | None:
+    """Whole-day rule: block when a relevant event falls on the same calendar day (in `tz`) as `now`."""
+    day = as_utc(now).tz_convert(tz).date()
+    for event in _relevant(events, pair, impacts):
+        local = event.time_utc.tz_convert(tz)
+        if local.date() == day:
+            label = f"{event.title} " if event.title else ""
+            return f"news day: {label}({event.currency}, {event.impact}) at {local:%H:%M} — aaj trade nahi (Ustad ka rule)"
+    return None
+
+
 def blackout_mask(events, pair: str, index: pd.DatetimeIndex, minutes_before: int, minutes_after: int, impacts=("high",)) -> np.ndarray:
     """Vectorised version for backtests: True where a decision time is inside a blackout."""
     mask = np.zeros(len(index), dtype=bool)

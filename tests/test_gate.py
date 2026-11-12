@@ -55,6 +55,29 @@ def test_news_blackout(gate):
     assert check(gate).allowed  # JPY news does not affect EURUSD
 
 
+def test_whole_day_news_rule_uses_the_pakistan_calendar_day(sessions):
+    policy = risk_policy_from_dict({**POLICY, "allowed_sessions": [],
+                                    "news_blackout": {"impact": ["high"], "whole_day": True, "day_timezone": "Asia/Karachi"}})
+    cpi = NewsEvent(pd.Timestamp("2026-11-10 13:30", tz="UTC"), "USD", "high", "CPI")  # 18:30 PKT on 10 Nov
+    gate = RiskGate(policy, sessions, [cpi])
+    morning = pd.Timestamp("2026-11-10 03:00", tz="UTC")  # 08:00 PKT, hours before the release
+    decision = check(gate, now=morning)
+    assert not decision.allowed and "news day: CPI" in decision.reasons[0]
+    assert not check(gate, now=pd.Timestamp("2026-11-10 18:30", tz="UTC")).allowed  # 23:30 PKT, same day
+    assert check(gate, now=pd.Timestamp("2026-11-10 19:30", tz="UTC")).allowed  # 00:30 PKT on 11 Nov
+    gate.events = [NewsEvent(cpi.time_utc, "JPY", "high", "BoJ")]
+    assert check(gate, now=morning).allowed  # JPY news does not touch EURUSD
+
+
+def test_policy_rejects_unknown_day_timezone():
+    import pytest as _pytest
+
+    from trader_agent.ksor import KsorError
+
+    with _pytest.raises(KsorError, match="day_timezone"):
+        risk_policy_from_dict({**POLICY, "news_blackout": {"whole_day": True, "day_timezone": "Mars/Base"}})
+
+
 def test_daily_loss_limit_and_cooldown(gate):
     state = DayState()
     state.record_outcome("LOSS", NOW - pd.Timedelta(minutes=30))

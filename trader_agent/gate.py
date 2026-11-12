@@ -14,7 +14,7 @@ from datetime import date
 import pandas as pd
 
 from .ksor import RiskPolicy
-from .news import NewsEvent, blackout_reason
+from .news import NewsEvent, blackout_reason, day_blackout_reason
 from .timeutil import SessionBook, as_utc
 
 
@@ -78,7 +78,10 @@ class RiskGate:
             reasons.append("market closed")
         if p.allowed_sessions and not any(self.sessions.contains(s, now) for s in p.allowed_sessions):
             reasons.append(f"outside allowed sessions {list(p.allowed_sessions)}")
-        news = blackout_reason(self.events, pair, now, p.news_minutes_before, p.news_minutes_after, p.news_impacts)
+        if p.news_whole_day:
+            news = day_blackout_reason(self.events, pair, now, p.news_day_timezone, p.news_impacts)
+        else:
+            news = blackout_reason(self.events, pair, now, p.news_minutes_before, p.news_minutes_after, p.news_impacts)
         if news:
             reasons.append(news)
         if state.losses >= p.max_losses_per_day:

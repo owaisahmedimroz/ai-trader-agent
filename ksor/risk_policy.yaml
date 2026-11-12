@@ -7,8 +7,9 @@ status: draft
 approved_by: null
 approved_on: null
 
-# Sirf in sessions mein signal (ksor/sessions.yaml ke naam)
-allowed_sessions: [london_newyork]
+# Sirf in sessions mein signal (ksor/sessions.yaml ke naam). Khali = har waqt (market khuli ho).
+# Ustad (2026-11-12): "Pakistani time mein kisi bhi time trade ho sake."
+allowed_sessions: []
 
 max_signals_per_day: 15          # din mein zyada se zyada signals
 max_losses_per_day: 3            # itne loss ke baad din band
@@ -19,7 +20,10 @@ min_minutes_between_signals: 2   # ek pair par do signals ka kam se kam farq
 
 news_blackout:
   impact: [high]                 # kaunsi news par signal band
-  minutes_before: 15             # Ustad se confirm karein
+  # Ustad (2026-11-12): "jis din news hogi us din trade karni hi nahi."
+  whole_day: true                # true = news wale poore din signal band
+  day_timezone: Asia/Karachi     # "din" Pakistan ke waqt se
+  minutes_before: 15             # sirf tab, jab whole_day: false ho
   minutes_after: 15
 
 max_feed_lag_seconds: 5          # data purana ho to signal nahi

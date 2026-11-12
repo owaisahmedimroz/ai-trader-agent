@@ -46,6 +46,8 @@ BASE_FEATURES: dict[str, str] = {
     "ema_21": "EMA 21 (close)",
     "ema_50": "EMA 50 (close)",
     "ema_200": "EMA 200 (close)",
+    "prev_ema_9": "EMA 9 on the previous candle (crossovers)",
+    "prev_ema_21": "EMA 21 on the previous candle (crossovers)",
     "rsi_14": "RSI 14",
     "atr_14": "ATR 14 (price units)",
     "bb_mid": "Bollinger middle (SMA 20)",
@@ -130,6 +132,8 @@ def build_features(
 
     for n in (9, 21, 50, 200):
         cols[f"ema_{n}"] = ind.ema(c, n)
+    cols["prev_ema_9"] = cols["ema_9"].shift(1)
+    cols["prev_ema_21"] = cols["ema_21"].shift(1)
     cols["rsi_14"] = ind.rsi(c, 14)
     atr14 = ind.atr(h, l, c, 14)
     cols["atr_14"] = atr14

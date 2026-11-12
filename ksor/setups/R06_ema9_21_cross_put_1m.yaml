@@ -1,0 +1,28 @@
+# Ustad (2026-11-12): EMA crossover, EMA 9/21, sirf 1 minute trade, koi bhi waqt.
+# Crossover 1-minute chart par maana (timeframe Ustad se confirm karna baqi).
+# Draft: sirf backtest/shadow. Live ke liye Ustad ki approval chahiye.
+
+id: R06
+name: "EMA 9/21 cross down PUT (1 min)"
+version: 1
+status: draft
+direction: PUT
+pairs: [EURUSD, GBPUSD]
+timeframe: M1
+sessions: []                  # Ustad: koi bhi waqt
+
+conditions:                   # EMA 9 ne abhi EMA 21 ko down cross kiya (pichli candle par cross nahi tha)
+  - "ema_9 < ema_21"
+  - "prev_ema_9 >= prev_ema_21"
+
+invalidations: []             # Ustad ne koi nahi batayi
+
+expiry_minutes: 1
+entry: next_open
+
+approved_by: null
+approved_on: null
+source: "Ustad, 2026-11-12 — ksor/intake/2026-11-12_ustad_followup.md (#3 EMA 9/21, #4 1 min, #5 koi bhi waqt)"
+evidence: "Backtest EUR/USD 2024–Oct 2026 + GBP/USD 2025: ~25,000 trades, jeet 48–50% (dono saal, har session) — break-even 55.6% se neeche, faisla DROP. Tafseel: ksor/intake/2026-11-12_backtest_round2.md"
+notes: |
+  News wale din ka rule risk policy mein hai (news_blackout.whole_day), setup mein nahi.

@@ -12,6 +12,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -207,6 +208,8 @@ class RiskPolicy:
     entry_window_seconds: int
     stake_percent: float
     martingale: bool
+    news_whole_day: bool = False  # Ustad: no trading at all on a day with relevant news
+    news_day_timezone: str = "Asia/Karachi"  # whose calendar day "the news day" is
 
 
 def risk_policy_from_dict(raw: dict, known_sessions=None) -> RiskPolicy:
@@ -234,10 +237,16 @@ def risk_policy_from_dict(raw: dict, known_sessions=None) -> RiskPolicy:
             entry_window_seconds=int(raw.get("entry_window_seconds", 10)),
             stake_percent=float(raw.get("stake_percent", 1.0)),
             martingale=bool(raw.get("martingale", False)),
+            news_whole_day=bool(news.get("whole_day", False)),
+            news_day_timezone=str(news.get("day_timezone", "Asia/Karachi")),
         )
     except KeyError as exc:
         raise KsorError(f"risk policy is missing {exc.args[0]!r}") from None
     problems = []
+    try:
+        ZoneInfo(policy.news_day_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        problems.append(f"news_blackout.day_timezone {policy.news_day_timezone!r} is not a timezone name")
     if policy.martingale:
         problems.append("martingale must stay false — it is never allowed")
     if policy.status not in STATUSES:
